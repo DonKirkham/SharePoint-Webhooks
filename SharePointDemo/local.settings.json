@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "SP_Tenant_Name": "dklabsgmf",
+    "SPApp_ClientId": "105e5df2-a5b8-46ac-8fe1-73deff4ab397",
+    "SPApp_ClientSecret": "+JOwIEqoRq84ASWRVJ4n+8wPVWHzDe6ZhHnqylS7iiQ=",
+    "AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=dklabswebhookstorage;AccountKey=ZiPOI8xEYpZPdgDNPeosNk/K8LthsNXPrX0J+1spd+y5ptt9hmxuYajyD+1cWUuzc69rSrt/qqxra+j99cJ5iA==",
+    "AzureWebJobsDashboard": "DefaultEndpointsProtocol=https;AccountName=dklabswebhookstorage;AccountKey=ZiPOI8xEYpZPdgDNPeosNk/K8LthsNXPrX0J+1spd+y5ptt9hmxuYajyD+1cWUuzc69rSrt/qqxra+j99cJ5iA==",
+    "WebhooksQueueName": "dklabswebhookdemo-queue",
+    "LastChangeTokensTableName": "dklabsWebhookDemoLastChangeTokens",
+    "HistoryListName": "WebhookHistory",
+    "FUNCTIONS_EXTENSION_VERSION": -1,
+    "WEBSITE_CONTENTSHARE": "dklabs-WebhookDemo"
+  }
+}
