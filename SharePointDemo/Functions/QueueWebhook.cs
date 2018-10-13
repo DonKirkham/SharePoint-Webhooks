@@ -20,17 +20,17 @@ namespace SharePointDemo.Functions
     public static class QueueWebhook
     {
         [FunctionName("QueueWebhook")]
-        public static void Run([QueueTrigger("dklabswebhookdemo-queue", Connection = "AzureWebJobsStorage")]string queueItem, ILogger log)
+        public static void Run([QueueTrigger("dklabswebhookdemo-queue", 
+            Connection = "AzureWebJobsStorage")]string queueItem, ILogger log)
         {
-            NotificationModel notification = JsonConvert.DeserializeObject<NotificationModel>(queueItem);
-            ProcessNotification(log, notification);
+            ProcessNotification(log, queueItem);
         }
 
-        public static void ProcessNotification(ILogger log, NotificationModel notification)
+        public static void ProcessNotification(ILogger log, string queueItem)
         {
 
+            NotificationModel notification = JsonConvert.DeserializeObject<NotificationModel>(queueItem);
             log.LogInformation($"Processing notification: {notification.Resource}");
-
             #region Get Context
             string url = string.Format($"https://{CloudConfigurationManager.GetSetting("SP_Tenant_Name")}.sharepoint.com{notification.SiteUrl}");
             OfficeDevPnP.Core.AuthenticationManager am = new AuthenticationManager();
@@ -51,28 +51,16 @@ namespace SharePointDemo.Functions
             }
             #endregion
 
-            #region Grab the list used to write the webhook history
-            // Ensure reference to the history list, create when not available
-            List historyList = null;
-            string historyListName = CloudConfigurationManager.GetSetting("HistoryListName");
-            if (!string.IsNullOrEmpty(historyListName))
-            {
-                historyList = cc.Web.GetListByTitle(historyListName);
-                if (historyList == null)
-                {
-                    historyList = cc.Web.CreateList(ListTemplateType.GenericList, historyListName, false);
-                    cc.ExecuteQueryRetry();
-                }
-            }
-            #endregion
-
             #region Get the Last Change Token
-            CloudStorageAccount storageAccount = CloudStorageAccount.Parse(CloudConfigurationManager.GetSetting("AzureWebJobsStorage"));
+            CloudStorageAccount storageAccount = 
+                CloudStorageAccount.Parse(CloudConfigurationManager.GetSetting("AzureWebJobsStorage"));
             CloudTableClient client = storageAccount.CreateCloudTableClient();
-            CloudTable table = client.GetTableReference(CloudConfigurationManager.GetSetting("LastChangeTokensTableName"));
+            CloudTable table = 
+                client.GetTableReference(CloudConfigurationManager.GetSetting("LastChangeTokensTableName"));
             table.CreateIfNotExists();
             TableOperation retrieveOperation = TableOperation.Retrieve<LastChangeEntity>("LastChangeToken", notification.Resource);
             TableResult query = table.Execute(retrieveOperation);
+
             ChangeToken lastChangeToken = null;
             if (query.Result != null)
             {
@@ -113,6 +101,13 @@ namespace SharePointDemo.Functions
                             lastChangeToken = change.ChangeToken;
                             if (change is ChangeItem)
                             {
+                                var listItemId = (change as ChangeItem).ItemId;
+                                log.LogInformation($"-Item that changed: ItemId: {listItemId}");
+                                if (handledListItems.Contains(listItemId))
+                                {
+                                    log.LogInformation("-ListItem already handled in this batch.");
+                                    continue;
+                                }
                                 ListItem listItem = changeList.GetItemById((change as ChangeItem).ItemId);
                                 try
                                 {
@@ -121,14 +116,7 @@ namespace SharePointDemo.Functions
                                 }
                                 catch (Exception ex)
                                 {
-                                    log.LogInformation(ex.Message);
-                                    continue;
-                                }
-                                log.LogInformation($"-Item that changed: ItemId: {listItem.Id}, Tenant: {listItem.FieldValues["Title"].ToString()}");
-                                if (handledListItems.Contains(listItem.Id))
-                                {
-                                    UpdateLastChangeToken(notification, lastChangeToken, table);
-                                    log.LogInformation("-ListItem already handled in this batch.");
+                                    log.LogInformation($"ERROR: {ex.Message}");
                                     continue;
                                 }
 
@@ -136,7 +124,7 @@ namespace SharePointDemo.Functions
                                 //DoWork(log, cc, listItem);
 
                                 UpdateLastChangeToken(notification, lastChangeToken, table);
-                                RecordChangeInWebhookHistory(cc, changeList, historyList, change);
+                                RecordChangeInWebhookHistory(cc, changeList, change);
                                 handledListItems.Add(listItem.Id);
                             }
                         }
@@ -186,7 +174,8 @@ namespace SharePointDemo.Functions
             }
             catch (Exception ex)
             {
-                throw new Exception($"ERROR: {ex.Message}");
+                log.LogInformation($"ERROR: {ex.Message}");
+                //throw new Exception($"ERROR: {ex.Message}");
             }
             #endregion
 
@@ -232,24 +221,6 @@ namespace SharePointDemo.Functions
                 ListItem file2 = doclib1.CreateDocumentFromTemplate($"{validatedFileName}.docx", doclib1.RootFolder, template);
                 cc.Load(file2);
                 cc.ExecuteQueryRetry();
-
-                //File file = cc.Web.GetFileByServerRelativeUrl($"{doclib1.RootFolder.ServerRelativeUrl}/{listItem.FieldValues["Title"].ToString()}.docx");
-                //cc.Load(file, f => f.Exists, f => f.ListItemAllFields);
-                //cc.ExecuteQueryRetry();
-                //ListItem file2 = null;
-                //if (file.Exists)
-                //{
-                //    file2 = file.ListItemAllFields;
-                //    log.LogInformation($"-Existing Document loaded.");
-                //}
-                //else
-                //{
-                //    ListItem file3 = doclib1.CreateDocumentFromTemplate($"{listItem.FieldValues["Title"].ToString()}.docx", doclib1.RootFolder, template);
-                //    cc.Load(file3);
-                //    cc.ExecuteQueryRetry();
-                //    file2 = file3;
-                //    log.LogInformation($"-Creating new document...");
-                //}
 
 
                 file2["Title"] = listItem.FieldValues["Title"];
@@ -307,14 +278,29 @@ namespace SharePointDemo.Functions
             table.Execute(insertOperation);
         }
 
-        public static void RecordChangeInWebhookHistory(ClientContext cc, List changeList, List historyList, Change change)
+        public static void RecordChangeInWebhookHistory(ClientContext cc, List changeList, Change change)
         {
+            #region Grab the list used to write the webhook history
+            // Ensure reference to the history list, create when not available
+            List historyList = null;
+            string historyListName = CloudConfigurationManager.GetSetting("HistoryListName");
+            if (!string.IsNullOrEmpty(historyListName))
+            {
+                historyList = cc.Web.GetListByTitle(historyListName);
+                if (historyList == null)
+                {
+                    historyList = cc.Web.CreateList(ListTemplateType.GenericList, historyListName, false);
+                    cc.ExecuteQueryRetry();
+                }
+            }
+            #endregion
+
             if (historyList == null) return;
             try
             {
                 ListItemCreationInformation newItem = new ListItemCreationInformation();
                 ListItem item = historyList.AddItem(newItem);
-                item["Title"] = string.Format("List {0} had a Change of type \"{1}\" on the item with Id {2}. Change Token: {3}", changeList.Title, change.ChangeType.ToString(), (change as ChangeItem).ItemId, (change as ChangeItem).ChangeToken.StringValue);
+                item["Title"] = string.Format($"List {changeList.Title} had a Change of type \"{change.ChangeType.ToString()}\" on the item with Id {(change as ChangeItem).ItemId}. Change Token: {(change as ChangeItem).ChangeToken.StringValue}");
                 item.Update();
                 cc.ExecuteQueryRetry();
             }

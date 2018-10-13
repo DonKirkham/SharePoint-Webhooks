@@ -16,7 +16,10 @@ namespace SharePointDemo.Functions
     public static class SharePointWebhook
     {
         [FunctionName("SharePointWebhook")]
-        public static async Task<HttpResponseMessage> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = null)]HttpRequestMessage req, TraceWriter log)
+        public static async Task<HttpResponseMessage> Run([HttpTrigger(AuthorizationLevel.Anonymous,
+                                                            "post",
+                                                            Route = null)]
+                                                            HttpRequestMessage req, TraceWriter log)
         {
             try
             {
@@ -35,16 +38,20 @@ namespace SharePointDemo.Functions
                 string content = await req.Content.ReadAsStringAsync();
                 log.Info($"Payload: {content}");
 
-                System.Collections.Generic.List<NotificationModel> notifications = JsonConvert.DeserializeObject<ResponseModel<NotificationModel>>(content).Value;
+                System.Collections.Generic.List<NotificationModel> notifications =
+                    JsonConvert.DeserializeObject<ResponseModel<NotificationModel>>(content).Value;
+
                 log.Info($"Notification count: {notifications.Count}");
+
                 if (notifications.Count > 0)
                 {
-                    CloudStorageAccount storageAccount = CloudStorageAccount.Parse(CloudConfigurationManager.GetSetting("AzureWebJobsStorage"));
-                    log.Info($"Getting connection to Storage Account: {storageAccount.ToString()}");
+                    CloudStorageAccount storageAccount = CloudStorageAccount
+                                    .Parse(CloudConfigurationManager.GetSetting("AzureWebJobsStorage"));
                     CloudQueueClient queueClient = storageAccount.CreateCloudQueueClient();
-                    CloudQueue queue = queueClient.GetQueueReference(CloudConfigurationManager.GetSetting("WebhooksQueueName"));
-                    log.Info($"Getting connection to Storage Queue: {queue.Name}");
+                    CloudQueue queue = queueClient.GetQueueReference(
+                                        CloudConfigurationManager.GetSetting("WebhooksQueueName"));
                     queue.CreateIfNotExists();
+
                     foreach (NotificationModel notification in notifications)
                     {
                         log.Info($"Processing notification: {notification.Resource}");
