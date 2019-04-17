@@ -9,6 +9,7 @@ using OfficeDevPnP.Core;
 using SharePointDemo.Common;
 using SharePointDemo.Models;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Security;
 using System.Text.RegularExpressions;
@@ -23,7 +24,6 @@ namespace SharePointDemo.Functions
         public static void Run([QueueTrigger("dklabswebhookdemo-queue", 
             Connection = "AzureWebJobsStorage")]string queueItem, ILogger log)
         {
-            //log.LogInformation($"Queue item: {queueItem}");
             ProcessNotification(log, queueItem);
         }
 
@@ -52,7 +52,7 @@ namespace SharePointDemo.Functions
             }
             #endregion
 
-            #region Get the Last Change Token
+            #region Get the Last Change Token from the Azure table
             CloudStorageAccount storageAccount = 
                 CloudStorageAccount.Parse(CloudConfigurationManager.GetSetting("AzureWebJobsStorage"));
             CloudTableClient client = storageAccount.CreateCloudTableClient();
@@ -73,12 +73,14 @@ namespace SharePointDemo.Functions
             }
             #endregion
 
-            #region Grab Changes since Last Change Token and Process
+            #region Grab Changes since Last Change Token (in batches)
             ChangeQuery changeQuery = new ChangeQuery(false, true)
             {
                 Item = true,
                 FetchLimit = 1000 // Max value is 2000, default = 1000
             };
+            //List will keep track of items we have already handled
+            List<int> handledListItems = new List<int>();
 
             // Start pulling down the changes
             bool allChangesRead = false;
@@ -90,16 +92,27 @@ namespace SharePointDemo.Functions
                 ChangeCollection changes = changeList.GetChanges(changeQuery);
                 cc.Load(changes);
                 cc.ExecuteQueryRetry();
+                #endregion
+                // Save last used changetoken to Azure table. We'll start from that one when the next event hits our service
+                if (changes.Count > 0)
+                {
+                    foreach (Change change in changes)
+                    {
+                        lastChangeToken = change.ChangeToken;
+                    }
+                }
+                LastChangeEntity lce = new LastChangeEntity("LastChangeToken", notification.Resource) { LastChangeToken = lastChangeToken.StringValue };
+                TableOperation insertOperation = TableOperation.InsertOrReplace(lce);
+                table.Execute(insertOperation);
 
+                #region Process changes
                 log.LogInformation($"Changes found: {changes.Count}");
                 if (changes.Count > 0)
                 {
                     try
                     {
-                        List<int> handledListItems = new List<int>();
                         foreach (Change change in changes)
                         {
-                            lastChangeToken = change.ChangeToken;
                             if (change is ChangeItem)
                             {
                                 var listItemId = (change as ChangeItem).ItemId;
@@ -107,27 +120,16 @@ namespace SharePointDemo.Functions
                                 if (handledListItems.Contains(listItemId))
                                 {
                                     log.LogInformation("-ListItem already handled in this batch.");
-                                    continue;
                                 }
-                                ListItem listItem = changeList.GetItemById((change as ChangeItem).ItemId);
-                                try
+                                else
                                 {
-                                    cc.Load(listItem);
-                                    cc.ExecuteQueryRetry();
+                                    //DO SOMETHING WITH LIST ITEM
+                                    DoWork(log, cc, changeList, change);
                                 }
-                                catch (Exception ex)
-                                {
-                                    log.LogInformation($"ERROR: {ex.Message}");
-                                    continue;
-                                }
-
-                                //DO SOMETHING WITH LIST ITEM
-                                //DoWork(log, cc, listItem);
-
-                                UpdateLastChangeToken(notification, lastChangeToken, table);
-                                RecordChangeInWebhookHistory(cc, changeList, change, log);
-                                handledListItems.Add(listItem.Id);
+                                RecordChangeInWebhookHistory(cc, changeList, change, log, notification.Resource);
+                                handledListItems.Add(listItemId);
                             }
+                            lastChangeToken = change.ChangeToken;
                         }
                         if (changes.Count < changeQuery.FetchLimit)
                         {
@@ -184,19 +186,31 @@ namespace SharePointDemo.Functions
             log.LogInformation("Processing complete.");
         }
 
-        private static void DoWork(ILogger log, ClientContext cc, ListItem listItem)
+        private static void DoWork(ILogger log, ClientContext cc, List changeList, Change change)
         {
+            var changeItem = change as ChangeItem;
+            if (change.ChangeType.ToString() == "DeleteObject")
+            {
+                //handle deleted items
+                return;
+            }
+            else
+            {
+                ListItem listItem = changeList.GetItemById((change as ChangeItem).ItemId);
+                try
+                {
+                    cc.Load(listItem);
+                    cc.ExecuteQueryRetry();
+                }
+                catch (Exception ex)
+                {
+                    log.LogInformation($"ERROR: {ex.Message}");
+                    return;
+                }
+            }
         }
 
-        public static void UpdateLastChangeToken(NotificationModel notification, ChangeToken lastChangeToken, CloudTable table)
-        {
-            // Persist the last used changetoken as we'll start from that one when the next event hits our service
-            LastChangeEntity lce = new LastChangeEntity("LastChangeToken", notification.Resource) { LastChangeToken = lastChangeToken.StringValue };
-            TableOperation insertOperation = TableOperation.InsertOrReplace(lce);
-            table.Execute(insertOperation);
-        }
-
-        public static void RecordChangeInWebhookHistory(ClientContext cc, List changeList, Change change, ILogger log)
+        public static void RecordChangeInWebhookHistory(ClientContext cc, List changeList, Change change, ILogger log, string resourceId )
         {
             #region Grab the list used to write the webhook history
             // Ensure reference to the history list, create when not available
@@ -218,7 +232,7 @@ namespace SharePointDemo.Functions
             {
                 ListItemCreationInformation newItem = new ListItemCreationInformation();
                 ListItem item = historyList.AddItem(newItem);
-                item["Title"] = string.Format($"List {changeList.Title} had a Change of type \"{change.ChangeType.ToString()}\" on the item with Id {(change as ChangeItem).ItemId}. Change Token: {(change as ChangeItem).ChangeToken.StringValue}");
+                item["Title"] = $"List {changeList.Title} had a Change of type \"{change.ChangeType.ToString()}\" on the item with Id {(change as ChangeItem).ItemId}. Change Token: {(change as ChangeItem).ChangeToken.StringValue}";
                 item.Update();
                 cc.ExecuteQueryRetry();
             }

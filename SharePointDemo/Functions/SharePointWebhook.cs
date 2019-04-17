@@ -24,6 +24,8 @@ namespace SharePointDemo.Functions
             try
             {
                 log.Info($"Triggered started...");
+
+                // Is this a registration request?
                 string validationToken = req.GetQueryNameValuePairs()
                     .FirstOrDefault(q => string.Compare(q.Key, "validationtoken", true) == 0)
                     .Value;
@@ -35,6 +37,7 @@ namespace SharePointDemo.Functions
                     return response;
                 }
 
+                // Not a registration, so let's get the payload
                 string content = await req.Content.ReadAsStringAsync();
                 log.Info($"Payload: {content}");
 
