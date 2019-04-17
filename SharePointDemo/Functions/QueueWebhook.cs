@@ -23,6 +23,7 @@ namespace SharePointDemo.Functions
         public static void Run([QueueTrigger("dklabswebhookdemo-queue", 
             Connection = "AzureWebJobsStorage")]string queueItem, ILogger log)
         {
+            //log.LogInformation($"Queue item: {queueItem}");
             ProcessNotification(log, queueItem);
         }
 
@@ -124,7 +125,7 @@ namespace SharePointDemo.Functions
                                 //DoWork(log, cc, listItem);
 
                                 UpdateLastChangeToken(notification, lastChangeToken, table);
-                                RecordChangeInWebhookHistory(cc, changeList, change);
+                                RecordChangeInWebhookHistory(cc, changeList, change, log);
                                 handledListItems.Add(listItem.Id);
                             }
                         }
@@ -195,7 +196,7 @@ namespace SharePointDemo.Functions
             table.Execute(insertOperation);
         }
 
-        public static void RecordChangeInWebhookHistory(ClientContext cc, List changeList, Change change)
+        public static void RecordChangeInWebhookHistory(ClientContext cc, List changeList, Change change, ILogger log)
         {
             #region Grab the list used to write the webhook history
             // Ensure reference to the history list, create when not available
@@ -223,7 +224,7 @@ namespace SharePointDemo.Functions
             }
             catch (Exception ex)
             {
-                //log.LogError($"ERROR: {ex.Message}");
+                log.LogError($"ERROR: {ex.Message}");
             }
         }
     }
